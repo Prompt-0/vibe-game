@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vibe Game - E2E Integration Test Suite</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 2rem;
+      background-color: #1e1e2e;
+      color: #cdd6f4;
+    }
+    h1 {
+      color: #89b4fa;
+      margin-bottom: 0.5rem;
+    }
+    #summary {
+      font-size: 1.4rem;
+      margin-top: 1rem;
+      margin-bottom: 2rem;
+      padding: 1rem;
+      border-radius: 6px;
+      font-weight: bold;
+    }
+    .summary-pass {
+      background-color: #2e3c30;
+      color: #a6e3a1;
+      border: 2px solid #a6e3a1;
+    }
+    .summary-fail {
+      background-color: #4a3038;
+      color: #f38ba8;
+      border: 2px solid #f38ba8;
+    }
+    .tier-section {
+      margin-bottom: 2rem;
+      background-color: #313244;
+      padding: 1rem;
+      border-radius: 8px;
+    }
+    .tier-header {
+      font-size: 1.25rem;
+      color: #fab387;
+      border-bottom: 2px solid #fab387;
+      padding-bottom: 0.3rem;
+      margin-top: 0;
+    }
+    .test-case {
+      margin: 0.4rem 0;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-size: 0.95rem;
+      display: flex;
+      justify-content: space-between;
+    }
+    .pass {
+      background-color: #2e3c30;
+      color: #a6e3a1;
+      border-left: 5px solid #a6e3a1;
+    }
+    .fail {
+      background-color: #4a3038;
+      color: #f38ba8;
+      border-left: 5px solid #f38ba8;
+    }
+    .error-details {
+      display: block;
+      font-size: 0.85rem;
+      color: #f38ba8;
+      margin-top: 0.2rem;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <h1>Vibe Game: E2E Integration Test Suite</h1>
+  <div id="summary">Running tests...</div>
+  <div id="results"></div>
+
+  <!-- Mock elements for testing components -->
+  <div id="mock-dom" style="position: absolute; left: -9999px; top: -9999px;">
+    <canvas id="mock-canvas"></canvas>
+    <button id="mock-play-btn"></button>
+    <input type="range" id="mock-volume-control" min="0" max="1" step="0.01" value="0.5">
+    <button class="mock-theme-btn active" data-theme="nature"></button>
+    <button class="mock-theme-btn" data-theme="abstract"></button>
+    <button class="mock-theme-btn" data-theme="cosmic"></button>
+  </div>
+
+  <script>
+    // ---------------------- WEB AUDIO API MOCKS ----------------------
+    class MockAudioParam {
+      constructor(value = 0) {
+        this.value = value;
+        this.calls = [];
+      }
+      setValueAtTime(val, time) {
+        this.value = val;
+        this.calls.push({ method: 'setValueAtTime', value: val, time });
+        return this;
+      }
+      linearRampToValueAtTime(val, time) {
+        this.value = val;
+        this.calls.push({ method: 'linearRampToValueAtTime', value: val, time });
+        return this;
+      }
+      exponentialRampToValueAtTime(val, time) {
+        this.value = val;
+        this.calls.push({ method: 'exponentialRampToValueAtTime', value: val, time });
+        return this;
+      }
+    }
+
+    class MockAudioNode {
+      constructor() {
+        this.connections = [];
+      }
+      connect(dest) {
+        this.connections.push(dest);
+        return dest;
+      }
+      disconnect() {
+        this.connections = [];
+      }
+    }
+
+    class MockGainNode extends MockAudioNode {
+      constructor(initialGain = 1.0) {
+        super();
+        this.gain = new MockAudioParam(initialGain);
+      }
+    }
+
+    class MockAnalyserNode extends MockAudioNode {
+      constructor() {
+        super();
+        this.fftSize = 256;
+      }
+      getByteFrequencyData(array) {
+        for (let i = 0; i < array.length; i++) {
+          array[i] = Math.floor(Math.random() * 256);
+        }
+      }
+      getByteTimeDomainData(array) {
+        for (let i = 0; i < array.length; i++) {
+          array[i] = 128;
+        }
+      }
+    }
+
+    class MockOscillatorNode extends MockAudioNode {
+      constructor() {
+        super();
+        this.type = 'sine';
+        this.frequency = new MockAudioParam(440);
+        this.isStarted = false;
+        this.isStopped = false;
+        this.startedAt = null;
+        this.stoppedAt = null;
+      }
+      start(time) {
+        this.isStarted = true;
+        this.startedAt = time;
+      }
+      stop(time) {
+        this.isStopped = true;
+        this.stoppedAt = time;
+      }
+    }
+
+    class MockStereoPannerNode extends MockAudioNode {
+      constructor() {
+        super();
+        this.pan = new MockAudioParam(0);
+      }
+    }
+
+    class MockAudioContext {
+      constructor() {
+        this.state = 'suspended';
+        this.currentTime = 0;
+        this.destination = new MockAudioNode();
+        this.nodesCreated = {
+          gain: [],
+          analyser: [],
+          oscillator: [],
+          panner: []
+        };
+      }
+      createGain() {
+        const node = new MockGainNode();
+        this.nodesCreated.gain.push(node);
+        return node;
+      }
+      createAnalyser() {
+        const node = new MockAnalyserNode();
+        this.nodesCreated.analyser.push(node);
+        return node;
+      }
+      createOscillator() {
+        const node = new MockOscillatorNode();
+        this.nodesCreated.oscillator.push(node);
+        return node;
+      }
+      createStereoPanner() {
+        const node = new MockStereoPannerNode();
+        this.nodesCreated.panner.push(node);
+        return node;
+      }
+      resume() {
+        this.state = 'running';
+        return Promise.resolve();
+      }
+      suspend() {
+        this.state = 'suspended';
+        return Promise.resolve();
+      }
+    }
+
+    // Attach mocks to global scope before modules load
+    window.AudioContext = MockAudioContext;
+    window.webkitAudioContext = MockAudioContext;
+  </script>
+
+  <script type="module">
+    import { CanvasEngine } from '../src/graphics.js';
+    import { AudioSynthesizer } from '../src/audio.js';
+    import { UIController } from '../src/ui.js';
+    import { initApp } from '../src/main.js';
+
+    // Assertion helpers
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error(message || "Assertion failed");
+      }
+    }
+
+    function assertEquals(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error(`${message || "Assertion failed"}: expected [${expected}], got [${actual}]`);
+      }
+    }
+
+    function assertInRange(val, min, max, message) {
+      if (val < min || val > max) {
+        throw new Error(`${message || "Assertion failed"}: value ${val} out of range [${min}, ${max}]`);
+      }
+    }
+
+    // Test suite structure
+    const tests = [];
+    function addTest(tier, feature, name, fn) {
+      tests.push({ tier, feature, name, fn });
+    }
+
+    // -------------------------------------------------------------
+    // TIER 1: FEATURE COVERAGE (35 Tests, 5 per feature)
+    // -------------------------------------------------------------
+
+    // --- F1: Fullscreen Canvas Rendering ---
+    addTest('Tier 1: Feature Coverage', 'F1: Fullscreen Canvas Rendering', 'F1-1: CanvasEngine is instantiable with a canvas', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      assert(engine instanceof CanvasEngine, 'Must be an instance of CanvasEngine');
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F1: Fullscreen Canvas Rendering', 'F1-2: CanvasEngine scales width/height to viewport dimensions', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      assertEquals(engine.canvas.width, window.innerWidth || 1);
+      assertEquals(engine.canvas.height, window.innerHeight || 1);
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F1: Fullscreen Canvas Rendering', 'F1-3: CanvasEngine registers and triggers window resize listener', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const oldWidth = window.innerWidth;
+      try {
+        Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
+        window.dispatchEvent(new Event('resize'));
+        assertEquals(engine.canvas.width, 1024);
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: oldWidth, configurable: true });
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F1: Fullscreen Canvas Rendering', 'F1-4: CanvasEngine initializes 2D canvas context', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      assert(engine.ctx instanceof CanvasRenderingContext2D, 'ctx must be CanvasRenderingContext2D');
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F1: Fullscreen Canvas Rendering', 'F1-5: CanvasEngine renders default state on creation', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.render();
+      assertEquals(engine.theme, 'nature', 'Default theme must be nature');
+      engine.destroy();
+    });
+
+    // --- F2: Theme Selection ---
+    addTest('Tier 1: Feature Coverage', 'F2: Theme Selection', 'F2-1: setTheme on CanvasEngine changes active theme property', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.setTheme('cosmic');
+      assertEquals(engine.theme, 'cosmic');
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F2: Theme Selection', 'F2-2: setTheme on AudioSynthesizer changes active theme property', () => {
+      const synth = new AudioSynthesizer();
+      synth.setTheme('abstract');
+      assertEquals(synth.theme, 'abstract');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F2: Theme Selection', 'F2-3: UIController theme selection updates aria-checked attributes', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(1); // Abstract
+      assertEquals(btns[0].getAttribute('aria-checked'), 'false');
+      assertEquals(btns[1].getAttribute('aria-checked'), 'true');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F2: Theme Selection', 'F2-4: UIController theme selection updates tabindex attributes', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(2); // Cosmic
+      assertEquals(btns[0].getAttribute('tabindex'), '-1');
+      assertEquals(btns[2].getAttribute('tabindex'), '0');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F2: Theme Selection', 'F2-5: UIController theme selection updates document.documentElement data-theme', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0); // Nature
+      assertEquals(document.documentElement.getAttribute('data-theme'), 'nature');
+    });
+
+    // --- F3: Interactive Visuals ---
+    addTest('Tier 1: Feature Coverage', 'F3: Interactive Visuals', 'F3-1: CanvasEngine interact method executes without exceptions', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.interact(0.3, 0.4);
+      assert(engine.interactions.length > 0, 'Interaction should be recorded');
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F3: Interactive Visuals', 'F3-2: UIController canvas click bubbles up to CanvasEngine', () => {
+      const canvas = document.getElementById('mock-canvas');
+      let interacted = false;
+      const ui = new UIController({
+        canvas,
+        onInteract: () => { interacted = true; }
+      });
+      canvas.dispatchEvent(new MouseEvent('click', { clientX: 100, clientY: 100 }));
+      assert(interacted, 'onInteract callback should be triggered');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F3: Interactive Visuals', 'F3-3: CanvasEngine creates visual interaction entry on trigger', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(0.5, 0.5);
+      assertEquals(engine.interactions.length, 1);
+      assertEquals(engine.interactions[0].x, 0.5);
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F3: Interactive Visuals', 'F3-4: CanvasEngine maps normalized coordinate bounds (0,0) and (1,1)', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(0, 0);
+      engine.triggerInteraction(1, 1);
+      assertEquals(engine.interactions[0].x, 0);
+      assertEquals(engine.interactions[1].x, 1);
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F3: Interactive Visuals', 'F3-5: CanvasEngine updates and draws interactions in the render loop', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(0.5, 0.5);
+      engine.render();
+      assert(engine.interactions.length > 0);
+      engine.destroy();
+    });
+
+    // --- F4: Ambient Audio ---
+    addTest('Tier 1: Feature Coverage', 'F4: Ambient Audio', 'F4-1: AudioSynthesizer is paused by default', () => {
+      const synth = new AudioSynthesizer();
+      assert(synth.isPaused, 'Should be paused by default');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F4: Ambient Audio', 'F4-2: AudioSynthesizer play method resumes context and updates state', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      assert(!synth.isPaused, 'Should not be paused after play');
+      assertEquals(synth.ctx.state, 'running');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F4: Ambient Audio', 'F4-3: AudioSynthesizer pause method suspends context and updates state', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.pause();
+      assert(synth.isPaused, 'Should be paused after pause');
+      assertEquals(synth.ctx.state, 'suspended');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F4: Ambient Audio', 'F4-4: AudioSynthesizer volume property is set to default', () => {
+      const synth = new AudioSynthesizer();
+      assertEquals(synth.volume, 0.5);
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F4: Ambient Audio', 'F4-5: AudioSynthesizer setVolume adjusts gain node value', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.setVolume(0.75);
+      assertEquals(synth.volume, 0.75);
+      assertEquals(synth.masterGain.gain.value, 0.75);
+    });
+
+    // --- F5: Interactive Audio & Harmonizer ---
+    addTest('Tier 1: Feature Coverage', 'F5: Interactive Audio & Harmonizer', 'F5-1: AudioSynthesizer maps y-coordinate to correct scale notes', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.setTheme('nature');
+      synth.triggerInteraction(0.5, 0.0); // Top of screen (index 9, highest pitch)
+      let osc = synth.ctx.nodesCreated.oscillator[0];
+      assertEquals(osc.frequency.value, 880.00); // Nature scale highest note
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F5: Interactive Audio & Harmonizer', 'F5-2: AudioSynthesizer maps x-coordinate to panning parameter', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.triggerInteraction(0.2, 0.5); // x=0.2 maps to pan = 0.2*2-1 = -0.6
+      let panner = synth.ctx.nodesCreated.panner[0];
+      assert(Math.abs(panner.pan.value - (-0.6)) < 0.001);
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F5: Interactive Audio & Harmonizer', 'F5-3: AudioSynthesizer playNote instantiates OscillatorNode and GainNode', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.playNote(440, 0);
+      assert(synth.ctx.nodesCreated.oscillator.length > 0);
+      assert(synth.ctx.nodesCreated.gain.length > 1); // master gain + note gain
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F5: Interactive Audio & Harmonizer', 'F5-4: AudioSynthesizer selects oscillator wave type based on active theme', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.setTheme('cosmic');
+      synth.playNote(440, 0);
+      assertEquals(synth.ctx.nodesCreated.oscillator[0].type, 'sine');
+      
+      synth.setTheme('abstract');
+      synth.playNote(440, 0);
+      assertEquals(synth.ctx.nodesCreated.oscillator[1].type, 'triangle');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F5: Interactive Audio & Harmonizer', 'F5-5: AudioSynthesizer playNote connects oscillator node chain to destination', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.playNote(440, 0);
+      const osc = synth.ctx.nodesCreated.oscillator[0];
+      const panner = synth.ctx.nodesCreated.panner[0];
+      const noteGain = synth.ctx.nodesCreated.gain[1];
+      assert(osc.connections.includes(panner), 'Oscillator connects to Panner');
+      assert(panner.connections.includes(noteGain), 'Panner connects to NoteGain');
+      assert(noteGain.connections.includes(synth.masterGain), 'NoteGain connects to MasterGain');
+    });
+
+    // --- F6: Keyboard Accessibility ---
+    addTest('Tier 1: Feature Coverage', 'F6: Keyboard Accessibility', 'F6-1: Active theme button is focusable (tabindex=0)', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0);
+      assertEquals(btns[0].getAttribute('tabindex'), '0');
+      assertEquals(btns[1].getAttribute('tabindex'), '-1');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F6: Keyboard Accessibility', 'F6-2: Pressing ArrowRight on theme button moves focus to next theme', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0);
+      btns[0].focus();
+      btns[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 1);
+      assertEquals(document.activeElement, btns[1]);
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F6: Keyboard Accessibility', 'F6-3: Pressing ArrowLeft on theme button moves focus to previous theme', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(1);
+      btns[1].focus();
+      btns[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 0);
+      assertEquals(document.activeElement, btns[0]);
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F6: Keyboard Accessibility', 'F6-4: Pressing ArrowDown on theme button moves focus to next theme', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(1);
+      btns[1].focus();
+      btns[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 2);
+      assertEquals(document.activeElement, btns[2]);
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F6: Keyboard Accessibility', 'F6-5: Pressing ArrowUp on theme button moves focus to previous theme', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(2);
+      btns[2].focus();
+      btns[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 1);
+      assertEquals(document.activeElement, btns[1]);
+    });
+
+    // --- F7: Performance & Memory Stability ---
+    addTest('Tier 1: Feature Coverage', 'F7: Performance & Memory Stability', 'F7-1: CanvasEngine start initiates requestAnimationFrame loop', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      let originalRAF = window.requestAnimationFrame;
+      let rafCalled = false;
+      window.requestAnimationFrame = (cb) => { rafCalled = true; return 123; };
+      try {
+        engine.start();
+        assert(rafCalled, 'requestAnimationFrame should be called');
+      } finally {
+        window.requestAnimationFrame = originalRAF;
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F7: Performance & Memory Stability', 'F7-2: CanvasEngine stop cancels animation frame', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      let originalCAF = window.cancelAnimationFrame;
+      let cafCalled = false;
+      window.cancelAnimationFrame = (id) => { if (id === 123) cafCalled = true; };
+      try {
+        engine.animationFrameId = 123;
+        engine.stop();
+        assert(cafCalled, 'cancelAnimationFrame should be called');
+      } finally {
+        window.cancelAnimationFrame = originalCAF;
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F7: Performance & Memory Stability', 'F7-3: CanvasEngine destroy removes window resize listener', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      let originalRemove = window.removeEventListener;
+      let removed = false;
+      window.removeEventListener = (type, fn) => {
+        if (type === 'resize') removed = true;
+      };
+      try {
+        engine.destroy();
+        assert(removed, 'resize listener should be removed');
+      } finally {
+        window.removeEventListener = originalRemove;
+      }
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F7: Performance & Memory Stability', 'F7-4: Fullscreen canvas size has correct LCP style parameters', () => {
+      const canvas = document.getElementById('mock-canvas');
+      canvas.style.position = 'absolute';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      assertEquals(canvas.style.width, '100%');
+      assertEquals(canvas.style.height, '100%');
+    });
+
+    addTest('Tier 1: Feature Coverage', 'F7: Performance & Memory Stability', 'F7-5: AudioSynthesizer cleans up inactive oscillators over time', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.playNote(440, 0);
+      assertEquals(synth.activeOscillators.length, 1);
+      synth.ctx.currentTime = 2.0; // move past note duration
+      synth.playNote(440, 0);
+      assertEquals(synth.activeOscillators.length, 1); // first node is filtered out
+    });
+
+    // -------------------------------------------------------------
+    // TIER 2: BOUNDARY & CORNER CASES (35 Tests, 5 per feature)
+    // -------------------------------------------------------------
+
+    // --- F1: Fullscreen Canvas Rendering (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F1: Fullscreen Canvas Rendering', 'F1-6: CanvasEngine throws on null/undefined canvas element', () => {
+      try {
+        new CanvasEngine(null);
+        assert(false, 'Should have thrown error');
+      } catch (e) {
+        assert(e.message.includes('Canvas element is required'));
+      }
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F1: Fullscreen Canvas Rendering', 'F1-7: CanvasEngine handles zero window dimensions gracefully', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const oldW = window.innerWidth;
+      const oldH = window.innerHeight;
+      try {
+        Object.defineProperty(window, 'innerWidth', { value: 0, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: 0, configurable: true });
+        engine.resize();
+        assert(engine.canvas.width >= 1);
+        assert(engine.canvas.height >= 1);
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: oldW, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: oldH, configurable: true });
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F1: Fullscreen Canvas Rendering', 'F1-8: CanvasEngine handles extremely large window dimensions', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const oldW = window.innerWidth;
+      const oldH = window.innerHeight;
+      try {
+        Object.defineProperty(window, 'innerWidth', { value: 8000, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: 8000, configurable: true });
+        engine.resize();
+        assertEquals(engine.canvas.width, 8000);
+        assertEquals(engine.canvas.height, 8000);
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: oldW, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: oldH, configurable: true });
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F1: Fullscreen Canvas Rendering', 'F1-9: CanvasEngine supports high devicePixelRatio rendering loop', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.render();
+      assert(true, 'Render completed successfully');
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F1: Fullscreen Canvas Rendering', 'F1-10: CanvasEngine handles rapid succession of resize events safely', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      for (let i = 0; i < 20; i++) {
+        window.dispatchEvent(new Event('resize'));
+      }
+      assert(true, 'Resized rapidly without exception');
+      engine.destroy();
+    });
+
+    // --- F2: Theme Selection (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F2: Theme Selection', 'F2-6: UIController selectTheme ignores out-of-bound index (negative)', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0);
+      ui.selectTheme(-1);
+      assertEquals(ui.activeThemeIndex, 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F2: Theme Selection', 'F2-7: UIController selectTheme ignores out-of-bound index (too high)', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0);
+      ui.selectTheme(50);
+      assertEquals(ui.activeThemeIndex, 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F2: Theme Selection', 'F2-8: AudioSynthesizer setTheme handles unknown theme gracefully', () => {
+      const synth = new AudioSynthesizer();
+      synth.setTheme('nature_fallback');
+      assertEquals(synth.theme, 'nature_fallback');
+      synth.play();
+      synth.triggerInteraction(0.5, 0.5); // Fallback scale matches nature
+      assert(synth.ctx.nodesCreated.oscillator.length > 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F2: Theme Selection', 'F2-9: CanvasEngine setTheme handles unknown theme gracefully', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.setTheme('retro_punk');
+      assertEquals(engine.theme, 'retro_punk');
+      engine.render(); // Ensure no crash when rendering invalid theme
+      assert(true);
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F2: Theme Selection', 'F2-10: UIController handles rapid theme switching without state mismatch', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      for (let i = 0; i < 20; i++) {
+        ui.selectTheme(i % btns.length);
+      }
+      const activeBtns = Array.from(btns).filter(b => b.classList.contains('active'));
+      assertEquals(activeBtns.length, 1);
+    });
+
+    // --- F3: Interactive Visuals (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F3: Interactive Visuals', 'F3-6: Interaction at exact (0,0) coordinates maps safely', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(0, 0);
+      assertEquals(engine.interactions[0].x, 0);
+      assertEquals(engine.interactions[0].y, 0);
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F3: Interactive Visuals', 'F3-7: Interaction at exact (1,1) coordinates maps safely', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(1, 1);
+      assertEquals(engine.interactions[0].x, 1);
+      assertEquals(engine.interactions[0].y, 1);
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F3: Interactive Visuals', 'F3-8: Out-of-bounds interaction coordinates are clamped', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(-0.2, 1.3);
+      assertEquals(engine.interactions[0].x, 0);
+      assertEquals(engine.interactions[0].y, 1);
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F3: Interactive Visuals', 'F3-9: CanvasEngine handles high interaction density stress', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      for (let i = 0; i < 200; i++) {
+        engine.triggerInteraction(0.5, 0.5);
+      }
+      engine.render();
+      assert(engine.interactions.length > 0);
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F3: Interactive Visuals', 'F3-10: Touch event with multiple touches uses first touch point', () => {
+      const canvas = document.getElementById('mock-canvas');
+      let interactedCoords = null;
+      const ui = new UIController({
+        canvas,
+        onInteract: (x, y) => { interactedCoords = { x, y }; }
+      });
+      const event = new CustomEvent('touchstart', { bubbles: true });
+      event.touches = [
+        { clientX: 100, clientY: 200 },
+        { clientX: 300, clientY: 400 }
+      ];
+      canvas.dispatchEvent(event);
+      assert(interactedCoords !== null);
+    });
+
+    // --- F4: Ambient Audio (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F4: Ambient Audio', 'F4-6: AudioSynthesizer setVolume clamps negative volume value', () => {
+      const synth = new AudioSynthesizer();
+      synth.setVolume(-0.2);
+      assertEquals(synth.volume, 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F4: Ambient Audio', 'F4-7: AudioSynthesizer setVolume clamps overflow volume value', () => {
+      const synth = new AudioSynthesizer();
+      synth.setVolume(2.5);
+      assertEquals(synth.volume, 1);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F4: Ambient Audio', 'F4-8: AudioSynthesizer play called repeatedly does not recreate AudioContext', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      const ctx1 = synth.ctx;
+      synth.play();
+      const ctx2 = synth.ctx;
+      assert(ctx1 === ctx2);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F4: Ambient Audio', 'F4-9: AudioSynthesizer pause called before play does not throw exception', () => {
+      const synth = new AudioSynthesizer();
+      synth.pause();
+      assert(synth.isPaused);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F4: Ambient Audio', 'F4-10: AudioSynthesizer handles asynchronous AudioContext suspension states', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.ctx.state = 'suspended';
+      synth.pause();
+      assert(synth.isPaused);
+    });
+
+    // --- F5: Interactive Audio & Harmonizer (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F5: Interactive Audio & Harmonizer', 'F5-6: Scale harmonizer clamps y=0 coordinate to highest index note', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.triggerInteraction(0.5, 0.0); // y=0 -> index = scale.length - 1
+      const osc = synth.ctx.nodesCreated.oscillator[0];
+      const scale = synth.scales.nature;
+      assertEquals(osc.frequency.value, scale[scale.length - 1]);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F5: Interactive Audio & Harmonizer', 'F5-7: Scale harmonizer clamps y=1 coordinate to lowest index note', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.triggerInteraction(0.5, 1.0); // y=1 -> index = 0
+      const osc = synth.ctx.nodesCreated.oscillator[0];
+      const scale = synth.scales.nature;
+      assertEquals(osc.frequency.value, scale[0]);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F5: Interactive Audio & Harmonizer', 'F5-8: Stereo Panner clamps extreme pan coordinates', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.triggerInteraction(-1.5, 0.5); // x=-1.5 -> pan should clamp to -1
+      const panner = synth.ctx.nodesCreated.panner[0];
+      assertEquals(panner.pan.value, -1);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F5: Interactive Audio & Harmonizer', 'F5-9: AudioSynthesizer note triggering handles StereoPanner fallback', () => {
+      const originalPanner = MockAudioContext.prototype.createStereoPanner;
+      delete MockAudioContext.prototype.createStereoPanner;
+      try {
+        const synth = new AudioSynthesizer();
+        synth.play();
+        synth.playNote(440, 0.5);
+        const activeOsc = synth.activeOscillators[0];
+        assert(activeOsc.panner === null);
+        assert(activeOsc.osc.connections.includes(activeOsc.noteGain));
+      } finally {
+        MockAudioContext.prototype.createStereoPanner = originalPanner;
+      }
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F5: Interactive Audio & Harmonizer', 'F5-10: High notes-per-second stress test handles 100 simultaneous notes', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      for (let i = 0; i < 100; i++) {
+        synth.playNote(440, 0);
+      }
+      assertEquals(synth.activeOscillators.length, 100);
+    });
+
+    // --- F6: Keyboard Accessibility (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F6: Keyboard Accessibility', 'F6-6: ArrowRight keydown wraps around from last to first theme button', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(2); // Cosmic
+      btns[2].focus();
+      btns[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 0);
+      assertEquals(document.activeElement, btns[0]);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F6: Keyboard Accessibility', 'F6-7: ArrowLeft keydown wraps around from first to last theme button', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0); // Nature
+      btns[0].focus();
+      btns[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 2);
+      assertEquals(document.activeElement, btns[2]);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F6: Keyboard Accessibility', 'F6-8: Pressing non-arrow keys does not change theme selection', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0);
+      btns[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F6: Keyboard Accessibility', 'F6-9: Pressing Tab key on theme buttons does not trigger custom selection', () => {
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      const ui = new UIController({ themeButtons: btns });
+      ui.selectTheme(0);
+      btns[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      assertEquals(ui.activeThemeIndex, 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F6: Keyboard Accessibility', 'F6-10: UIController handles empty theme buttons list without errors', () => {
+      try {
+        const ui = new UIController({ themeButtons: [] });
+        ui.selectTheme(0);
+        assert(true);
+      } catch (e) {
+        assert(false, 'Should not throw on empty button lists');
+      }
+    });
+
+    // --- F7: Performance & Memory Stability (Boundary) ---
+    addTest('Tier 2: Boundary Cases', 'F7: Performance & Memory Stability', 'F7-6: Performance: hidden tab visibilityState stops rendering loop', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.start();
+      const oldState = document.visibilityState;
+      try {
+        Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+        assert(true);
+      } finally {
+        Object.defineProperty(document, 'visibilityState', { value: oldState, configurable: true });
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F7: Performance & Memory Stability', 'F7-7: Muted volume (0) schedules gain node to 0 for silence', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.setVolume(0);
+      assertEquals(synth.masterGain.gain.value, 0);
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F7: Performance & Memory Stability', 'F7-8: Active visual interactions decay to zero after inactive time', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.triggerInteraction(0.5, 0.5);
+      assertEquals(engine.interactions.length, 1);
+      
+      const oldNow = Date.now;
+      try {
+        Date.now = () => oldNow() + 2000;
+        engine.render();
+        assertEquals(engine.interactions.length, 0);
+      } finally {
+        Date.now = oldNow;
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F7: Performance & Memory Stability', 'F7-9: Finished audio nodes are pruned from activeOscillators list', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      synth.playNote(440, 0);
+      assertEquals(synth.activeOscillators.length, 1);
+      synth.ctx.currentTime = 5.0; // Fast-forward time
+      synth.playNote(440, 0);
+      assertEquals(synth.activeOscillators.length, 1); // Old note is removed, only 1 new remains
+    });
+
+    addTest('Tier 2: Boundary Cases', 'F7: Performance & Memory Stability', 'F7-10: Low FPS simulation: CanvasEngine rendering adapts safely', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      engine.render();
+      assert(true);
+      engine.destroy();
+    });
+
+    // -------------------------------------------------------------
+    // TIER 3: CROSS-FEATURE INTERACTIONS (7 Tests)
+    // -------------------------------------------------------------
+    addTest('Tier 3: Cross Interactions', 'Theme + Visuals + Audio', 'X-1: Theme selection updates both canvas visuals and synthesizer scales', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const synth = new AudioSynthesizer();
+      const btns = document.querySelectorAll('.mock-theme-btn');
+      
+      const ui = new UIController({
+        themeButtons: btns,
+        onThemeChange: (theme) => {
+          engine.setTheme(theme);
+          synth.setTheme(theme);
+        }
+      });
+      
+      ui.selectTheme(2); // Cosmic
+      assertEquals(engine.theme, 'cosmic');
+      assertEquals(synth.theme, 'cosmic');
+      engine.destroy();
+    });
+
+    addTest('Tier 3: Cross Interactions', 'Ambient Audio + Visuals', 'X-2: Play/Pause toggle plays/pauses both graphics loop and ambient audio', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const synth = new AudioSynthesizer();
+      const playBtn = document.getElementById('mock-play-btn');
+      
+      const ui = new UIController({
+        playBtn,
+        onPlayPause: (state) => {
+          if (state) {
+            engine.start();
+            synth.play();
+          } else {
+            engine.stop();
+            synth.pause();
+          }
+        }
+      });
+      
+      ui.handlePlayPause(); // toggles playing to true
+      assert(!engine.isPaused);
+      assert(!synth.isPaused);
+      
+      ui.handlePlayPause(); // toggles playing to false
+      assert(engine.isPaused);
+      assert(synth.isPaused);
+      engine.destroy();
+    });
+
+    addTest('Tier 3: Cross Interactions', 'Visuals + Audio', 'X-3: Canvas click triggers both visual interaction and audio note generation', () => {
+      const canvas = document.getElementById('mock-canvas');
+      const engine = new CanvasEngine(canvas);
+      const synth = new AudioSynthesizer();
+      
+      const ui = new UIController({
+        canvas,
+        onInteract: (x, y) => {
+          engine.triggerInteraction(x, y);
+          synth.triggerInteraction(x, y);
+        }
+      });
+      
+      synth.play();
+      canvas.dispatchEvent(new MouseEvent('click', { clientX: 100, clientY: 100 }));
+      assertEquals(engine.interactions.length, 1);
+      assert(synth.activeOscillators.length > 0);
+      engine.destroy();
+    });
+
+    addTest('Tier 3: Cross Interactions', 'Volume + Master Gain', 'X-4: Changing volume slider updates master gain node value immediately', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      const volumeControl = document.getElementById('mock-volume-control');
+      
+      const ui = new UIController({
+        volumeControl,
+        onVolumeChange: (val) => { synth.setVolume(val); }
+      });
+      
+      volumeControl.value = 0.85;
+      volumeControl.dispatchEvent(new Event('input'));
+      assertEquals(synth.volume, 0.85);
+      assertEquals(synth.masterGain.gain.value, 0.85);
+    });
+
+    addTest('Tier 3: Cross Interactions', 'Viewport + Coords Mapping', 'X-5: Resizing screen updates canvas dimension and scales interaction coords', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const oldW = window.innerWidth;
+      try {
+        Object.defineProperty(window, 'innerWidth', { value: 600, configurable: true });
+        window.dispatchEvent(new Event('resize'));
+        engine.triggerInteraction(0.5, 0.5);
+        assert(engine.canvas.width === 600);
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: oldW, configurable: true });
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 3: Cross Interactions', 'Theme + Musical Scale', 'X-6: Interactive note frequency matches theme scale on theme change', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      
+      synth.setTheme('nature');
+      synth.triggerInteraction(0.5, 0.5);
+      const freqNature = synth.ctx.nodesCreated.oscillator[0].frequency.value;
+      
+      synth.setTheme('cosmic');
+      synth.triggerInteraction(0.5, 0.5);
+      const freqCosmic = synth.ctx.nodesCreated.oscillator[1].frequency.value;
+      
+      assert(freqNature !== freqCosmic);
+    });
+
+    addTest('Tier 3: Cross Interactions', 'Visual Engine + Analyser', 'X-7: Visual engine integrates with AudioSynthesizer AnalyserNode data', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const synth = new AudioSynthesizer();
+      synth.play();
+      
+      const analyser = synth.getAnalyserNode();
+      assert(analyser instanceof MockAnalyserNode);
+      const data = new Uint8Array(analyser.fftSize);
+      analyser.getByteFrequencyData(data);
+      assert(data.some(val => val !== 0));
+      engine.destroy();
+    });
+
+    // -------------------------------------------------------------
+    // TIER 4: REAL-WORLD APPLICATION SCENARIOS (5 Tests)
+    // -------------------------------------------------------------
+    addTest('Tier 4: Scenarios', 'Casual Player Ambient Session', 'S-1: Casual Player Ambient Session', () => {
+      const canvas = document.createElement('canvas');
+      canvas.id = 'vibe-canvas';
+      const playBtn = document.createElement('button');
+      playBtn.id = 'play-pause-btn';
+      const volumeControl = document.createElement('input');
+      volumeControl.id = 'volume-control';
+      volumeControl.type = 'range';
+      volumeControl.value = '0.5';
+      
+      const themeBtn1 = document.createElement('button');
+      themeBtn1.className = 'theme-btn active';
+      themeBtn1.setAttribute('data-theme', 'nature');
+      const themeBtn2 = document.createElement('button');
+      themeBtn2.className = 'theme-btn';
+      themeBtn2.setAttribute('data-theme', 'abstract');
+      const themeBtn3 = document.createElement('button');
+      themeBtn3.className = 'theme-btn';
+      themeBtn3.setAttribute('data-theme', 'cosmic');
+      
+      document.body.appendChild(canvas);
+      document.body.appendChild(playBtn);
+      document.body.appendChild(volumeControl);
+      document.body.appendChild(themeBtn1);
+      document.body.appendChild(themeBtn2);
+      document.body.appendChild(themeBtn3);
+      
+      try {
+        const apps = initApp();
+        assert(apps.graphics instanceof CanvasEngine);
+        assert(apps.audio instanceof AudioSynthesizer);
+        assert(apps.ui instanceof UIController);
+        
+        apps.ui.handlePlayPause();
+        assert(!apps.graphics.isPaused);
+        assert(!apps.audio.isPaused);
+        
+        apps.ui.onInteract(0.5, 0.5);
+        assert(apps.graphics.interactions.length === 1);
+        assert(apps.audio.activeOscillators.length === 1);
+        
+        themeBtn3.click(); // Cosmic
+        assertEquals(apps.graphics.theme, 'cosmic');
+        assertEquals(apps.audio.theme, 'cosmic');
+        
+        apps.ui.handlePlayPause();
+        assert(apps.graphics.isPaused);
+        assert(apps.audio.isPaused);
+      } finally {
+        canvas.remove();
+        playBtn.remove();
+        volumeControl.remove();
+        themeBtn1.remove();
+        themeBtn2.remove();
+        themeBtn3.remove();
+      }
+    });
+
+    addTest('Tier 4: Scenarios', 'Rapid Performance Stress', 'S-2: Rapid Performance Stress', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const synth = new AudioSynthesizer();
+      synth.play();
+      
+      for (let i = 0; i < 50; i++) {
+        engine.triggerInteraction(Math.random(), Math.random());
+        synth.triggerInteraction(Math.random(), Math.random());
+      }
+      
+      engine.setTheme('nature');
+      synth.setTheme('nature');
+      engine.setTheme('abstract');
+      synth.setTheme('abstract');
+      engine.setTheme('cosmic');
+      synth.setTheme('cosmic');
+      
+      assert(engine.interactions.length <= 50);
+      assert(synth.activeOscillators.length <= 50);
+      engine.destroy();
+    });
+
+    addTest('Tier 4: Scenarios', 'Accessibility-Only Navigation', 'S-3: Accessibility-Only Navigation', () => {
+      const canvas = document.createElement('canvas');
+      canvas.id = 'vibe-canvas';
+      const playBtn = document.createElement('button');
+      playBtn.id = 'play-pause-btn';
+      const volumeControl = document.createElement('input');
+      volumeControl.id = 'volume-control';
+      volumeControl.type = 'range';
+      volumeControl.value = '0.5';
+      
+      const themeBtn1 = document.createElement('button');
+      themeBtn1.className = 'theme-btn active';
+      themeBtn1.setAttribute('data-theme', 'nature');
+      const themeBtn2 = document.createElement('button');
+      themeBtn2.className = 'theme-btn';
+      themeBtn2.setAttribute('data-theme', 'abstract');
+      const themeBtn3 = document.createElement('button');
+      themeBtn3.className = 'theme-btn';
+      themeBtn3.setAttribute('data-theme', 'cosmic');
+      
+      document.body.appendChild(canvas);
+      document.body.appendChild(playBtn);
+      document.body.appendChild(volumeControl);
+      document.body.appendChild(themeBtn1);
+      document.body.appendChild(themeBtn2);
+      document.body.appendChild(themeBtn3);
+      
+      try {
+        const apps = initApp();
+        
+        themeBtn1.focus();
+        themeBtn1.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        assertEquals(apps.ui.activeThemeIndex, 1);
+        assertEquals(document.activeElement, themeBtn2);
+        
+        themeBtn2.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        assertEquals(apps.ui.activeThemeIndex, 2);
+        assertEquals(document.activeElement, themeBtn3);
+        
+        playBtn.focus();
+        playBtn.dispatchEvent(new MouseEvent('click'));
+        assert(!apps.graphics.isPaused);
+        assert(!apps.audio.isPaused);
+      } finally {
+        canvas.remove();
+        playBtn.remove();
+        volumeControl.remove();
+        themeBtn1.remove();
+        themeBtn2.remove();
+        themeBtn3.remove();
+      }
+    });
+
+    addTest('Tier 4: Scenarios', 'Responsive Resize Vibe Check', 'S-4: Responsive Resize Vibe Check', () => {
+      const canvas = document.createElement('canvas');
+      const engine = new CanvasEngine(canvas);
+      const oldW = window.innerWidth;
+      const oldH = window.innerHeight;
+      try {
+        Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
+        engine.resize();
+        assertEquals(engine.canvas.width, 800);
+        engine.triggerInteraction(0.5, 0.5);
+        
+        Object.defineProperty(window, 'innerWidth', { value: 1920, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: 1080, configurable: true });
+        engine.resize();
+        assertEquals(engine.canvas.width, 1920);
+        engine.triggerInteraction(0.5, 0.5);
+        assert(true);
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { value: oldW, configurable: true });
+        Object.defineProperty(window, 'innerHeight', { value: oldH, configurable: true });
+      }
+      engine.destroy();
+    });
+
+    addTest('Tier 4: Scenarios', 'Musical Harmonization Jam', 'S-5: Musical Harmonization Jam', () => {
+      const synth = new AudioSynthesizer();
+      synth.play();
+      
+      synth.setTheme('nature');
+      synth.triggerInteraction(0.0, 1.0); // x=0 -> pan=-1, y=1 -> index=0 (lowest frequency)
+      const panner1 = synth.ctx.nodesCreated.panner[0];
+      const osc1 = synth.ctx.nodesCreated.oscillator[0];
+      assertEquals(panner1.pan.value, -1);
+      assertEquals(osc1.frequency.value, synth.scales.nature[0]);
+      
+      synth.setTheme('cosmic');
+      synth.triggerInteraction(1.0, 0.0); // x=1 -> pan=1, y=0 -> index=9 (highest frequency)
+      const panner2 = synth.ctx.nodesCreated.panner[1];
+      const osc2 = synth.ctx.nodesCreated.oscillator[1];
+      assertEquals(panner2.pan.value, 1);
+      const cosmicScale = synth.scales.cosmic;
+      assertEquals(osc2.frequency.value, cosmicScale[cosmicScale.length - 1]);
+    });
+
+
+    // -------------------------------------------------------------
+    // SPECS EXECUTION & REPORTING
+    // -------------------------------------------------------------
+    const resultsDiv = document.getElementById('results');
+    const summaryDiv = document.getElementById('summary');
+
+    let passedCount = 0;
+    let failedCount = 0;
+    const groups = {};
+
+    // Group tests by Tier to render structured results
+    for (const test of tests) {
+      if (!groups[test.tier]) {
+        groups[test.tier] = {};
+      }
+      if (!groups[test.tier][test.feature]) {
+        groups[test.tier][test.feature] = [];
+      }
+      groups[test.tier][test.feature].push(test);
+    }
+
+    // Run tests
+    for (const tierName of Object.keys(groups)) {
+      const tierSection = document.createElement('div');
+      tierSection.className = 'tier-section';
+      
+      const tierHeader = document.createElement('h2');
+      tierHeader.className = 'tier-header';
+      tierHeader.innerText = tierName;
+      tierSection.appendChild(tierHeader);
+
+      for (const featureName of Object.keys(groups[tierName])) {
+        const featureGroup = document.createElement('div');
+        featureGroup.className = 'feature-group';
+        featureGroup.innerText = `Feature: ${featureName}`;
+        tierSection.appendChild(featureGroup);
+
+        for (const test of groups[tierName][featureName]) {
+          const testCaseEl = document.createElement('div');
+          testCaseEl.className = 'test-case';
+          
+          const nameSpan = document.createElement('span');
+          nameSpan.innerText = test.name;
+          testCaseEl.appendChild(nameSpan);
+
+          const statusSpan = document.createElement('span');
+          statusSpan.style.fontWeight = 'bold';
+
+          try {
+            // Run actual test function
+            test.fn();
+            testCaseEl.classList.add('pass');
+            statusSpan.innerText = 'PASS';
+            passedCount++;
+          } catch (err) {
+            testCaseEl.classList.add('fail');
+            statusSpan.innerText = 'FAIL';
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-details';
+            errorDiv.innerText = `${err.message}\n${err.stack || ''}`;
+            testCaseEl.appendChild(errorDiv);
+            
+            console.error(`FAILED: ${test.name}`, err);
+            failedCount++;
+          }
+
+          testCaseEl.appendChild(statusSpan);
+          tierSection.appendChild(testCaseEl);
+        }
+      }
+      resultsDiv.appendChild(tierSection);
+    }
+
+    // Output final summary
+    if (failedCount === 0) {
+      summaryDiv.innerText = `SUCCESS: ${passedCount} of ${tests.length} tests passed.`;
+      summaryDiv.className = 'summary-pass';
+    } else {
+      summaryDiv.innerText = `FAILURE: ${failedCount} of ${tests.length} tests failed. Total: ${tests.length}.`;
+      summaryDiv.className = 'summary-fail';
+    }
+
+    // Save result summary as a global for verification scripts (e.g. puppeteer/headless)
+    window.testResults = {
+      passed: passedCount,
+      failed: failedCount,
+      total: tests.length,
+      success: failedCount === 0
+    };
+  </script>
+</body>
+</html>

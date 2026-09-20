@@ -1,0 +1,19 @@
+{
+  "name": "vibe-game",
+  "version": "1.0.0",
+  "description": "An interactive sensory audio-visual web experience matching user inputs and themes.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node -c server.js src/main.js src/graphics.js src/audio.js src/ui.js && echo 'Syntax validation check: PASSED'"
+  },
+  "keywords": [
+    "webaudio",
+    "canvas",
+    "interactive",
+    "accessibility"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module"
+}

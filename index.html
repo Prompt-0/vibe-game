@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=device-width, initial-scale=1.0">
+  <title>Vibe Game</title>
+  <link rel="preload" href="styles.css" as="style">
+  <link rel="modulepreload" href="src/main.js">
+  <link rel="modulepreload" href="src/graphics.js">
+  <link rel="modulepreload" href="src/audio.js">
+  <link rel="modulepreload" href="src/ui.js">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Fullscreen Canvas -->
+  <canvas id="vibe-canvas" aria-label="Interactive visual representation of the audio waves and theme visuals"></canvas>
+
+  <!-- Accessible UI Controls -->
+  <main class="ui-container" aria-label="Game Controls">
+    <div class="control-panel">
+      <!-- Media Controls -->
+      <section class="media-controls" aria-label="Playback and Volume Controls">
+        <button id="play-pause-btn" class="control-btn" aria-label="Play Game Audio" aria-pressed="false">
+          Play
+        </button>
+        <div class="volume-container">
+          <label for="volume-control" class="sr-only">Volume Control</label>
+          <input type="range" id="volume-control" min="0" max="1" step="0.01" value="0.5" aria-label="Audio Volume">
+        </div>
+      </section>
+
+      <!-- Theme Switcher -->
+      <section class="theme-controls" aria-label="Theme Selection">
+        <span id="theme-label" class="sr-only">Choose Visual and Audio Theme:</span>
+        <div role="radiogroup" aria-labelledby="theme-label" class="theme-group">
+          <button role="radio" aria-checked="true" class="theme-btn active" data-theme="nature" tabindex="0">
+            Nature
+          </button>
+          <button role="radio" aria-checked="false" class="theme-btn" data-theme="abstract" tabindex="0">
+            Abstract
+          </button>
+          <button role="radio" aria-checked="false" class="theme-btn" data-theme="cosmic" tabindex="0">
+            Cosmic
+          </button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
